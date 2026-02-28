@@ -39,7 +39,7 @@ class Oscquery:
 			print ("OSCQuery: Setting parameter " + parName + " which is read only or has an active expression or export is prevented.")
 			return
 
-		if parStyle in ["Float", "XY", "XYZ", "UV", "UVW", "WH"]:
+		if parStyle in ["Float", "XY", "XYZ", "UV", "UVW", "WH", "XYZW"]:
 			for i, p in enumerate(parameter.tuplet):
 				p.val = args[i]
 
@@ -49,13 +49,13 @@ class Oscquery:
 			value = args[0]
 			color = []
 
-			if isinstance(value, float):
-				color = args
+			if isinstance(value, (int, float)):
+				color = [float(a) for a in args]
 
 			else:
 				try:
 					value = struct.unpack('<BBBB', value)
-				except (UnicodeDecodeError, AttributeError):
+				except (UnicodeDecodeError, AttributeError, TypeError):
 					pass
 
 				if isinstance(value, tuple):
@@ -249,7 +249,7 @@ class Oscquery:
 		if "lastReceivedValue" in storedItem.keys(): 
 			parStyle = parameter.style
 
-			if parStyle in ["Float", "XY", "XYZ", "UV", "UVW", "WH", "RGB", "RGBA"]:
+			if parStyle in ["Float", "XY", "XYZ", "UV", "UVW", "WH", "XYZW", "RGB", "RGBA"]:
 				for i, p in enumerate(parameter.tuplet):
 					if p.eval() != storedItem["lastReceivedValue"][i]:
 						return False
@@ -264,21 +264,14 @@ class Oscquery:
 	def getValue(self, parameter):
 		size = len(parameter.tuplet)
 
-		if (parameter.style in ["Float", "XY", "UV", "WH", "XYZ", "UVW"]):
-			if size == 1:
-				return [parameter.tuplet[0].eval()]
-			elif size == 2:
-				return [parameter.tuplet[0].eval(), parameter.tuplet[1].eval()]
-			elif size == 3:
-				return [parameter.tuplet[0].eval(), parameter.tuplet[1].eval(), parameter.tuplet[2].eval()]
-			elif size == 4: 
-				return [parameter.tuplet[0].eval(), parameter.tuplet[1].eval(), parameter.tuplet[2].eval(), parameter.tuplet[3].eval()]
+		if (parameter.style in ["Float", "XY", "UV", "WH", "XYZ", "UVW", "XYZW", "Int"]):
+			return [p.eval() for p in parameter.tuplet]
 
 		if (parameter.style in ["RGB", "RGBA"]):
 			r = self.getHex(parameter.tuplet[0].eval())
 			g = self.getHex(parameter.tuplet[1].eval())
 			b = self.getHex(parameter.tuplet[2].eval())
-			a = "ff" if parameter.style == "RGB" else self.getHex(parameter.tuplet[3].eval())
+			a = "ff" if size < 4 else self.getHex(parameter.tuplet[3].eval())
 			return ["#" + r + g + b + a]
 
 		if (parameter.style == "Menu"):
@@ -294,6 +287,9 @@ class Oscquery:
 		if (parameter.style in ["CHOP", "COMP", "DAT", "SOP", "MAT", "TOP"]):
 			return [parameter.val]
 		else:
+			# Fallback: read all tuplet components for unknown multi-component styles
+			if size > 1:
+				return [p.eval() for p in parameter.tuplet]
 			return [parameter.eval()]
 
 
@@ -301,21 +297,14 @@ class Oscquery:
 	def getValueForUpdate(self, parameter):
 		size = len(parameter.tuplet)
 
-		if (parameter.style in ["Float", "XY", "UV", "WH", "XYZ", "UVW"]):
-			if size == 1:
-				return [parameter.tuplet[0].eval()]
-			elif size == 2:
-				return [parameter.tuplet[0].eval(), parameter.tuplet[1].eval()]
-			elif size == 3:
-				return [parameter.tuplet[0].eval(), parameter.tuplet[1].eval(), parameter.tuplet[2].eval()]
-			elif size == 4: 
-				return [parameter.tuplet[0].eval(), parameter.tuplet[1].eval(), parameter.tuplet[2].eval(), parameter.tuplet[3].eval()]
+		if (parameter.style in ["Float", "XY", "UV", "WH", "XYZ", "UVW", "XYZW", "Int"]):
+			return [p.eval() for p in parameter.tuplet]
 
 		if (parameter.style in ["RGB", "RGBA"]):
 			r = self.floatToInt(parameter.tuplet[0].eval())
 			g = self.floatToInt(parameter.tuplet[1].eval())
 			b = self.floatToInt(parameter.tuplet[2].eval())
-			a = 255 if parameter.style == "RGB" else self.floatToInt(parameter.tuplet[3].eval())
+			a = 255 if size < 4 else self.floatToInt(parameter.tuplet[3].eval())
 
 			return [osclib.OSCrgba(r, g, b, a)]
 
@@ -332,6 +321,8 @@ class Oscquery:
 		if (parameter.style in ["CHOP", "COMP", "DAT", "SOP", "MAT", "TOP"]):
 			return [parameter.val]
 		else:
+			if size > 1:
+				return [p.eval() for p in parameter.tuplet]
 			return [parameter.eval()]
 
 	def floatToInt(self, f):
@@ -349,18 +340,15 @@ class Oscquery:
 		if (parameter.style == "Toggle"):
 			return [{ "MAX": 1, "MIN": 0 }]
 
-		if (parameter.style in ["Float", "XY", "UV", "WH", "XYZ", "UVW"]):
-			result = []
-
-			for i in range(size):
-				newRange = { "MAX": parameter.tuplet[i].normMax, "MIN": parameter.tuplet[i].normMin }
-				result.append(newRange)
-
-			return result
+		if (parameter.style in ["Float", "XY", "UV", "WH", "XYZ", "UVW", "XYZW", "Int"]):
+			return [{ "MAX": parameter.tuplet[i].normMax, "MIN": parameter.tuplet[i].normMin } for i in range(size)]
 
 		if (parameter.style == "Menu"):
 			return [{ "VALS": parameter.menuLabels }]
 
+		# Fallback: per-component ranges for unknown multi-component styles
+		if size > 1:
+			return [{ "MAX": parameter.tuplet[i].normMax, "MIN": parameter.tuplet[i].normMin } for i in range(size)]
 		return [{ "MAX": parameter.normMax, "MIN": parameter.normMin }]
 
 
@@ -368,7 +356,7 @@ class Oscquery:
 		t = parameter.style
 		size = len(parameter.tuplet)
 
-		if (t in ["Float", "XY", "UV", "WH", "XYZ", "UVW"]):
+		if (t in ["Float", "XY", "UV", "WH", "XYZ", "UVW", "XYZW"]):
 			return "f" * size
 		elif (t == "Int"):
 			return "i" * size
